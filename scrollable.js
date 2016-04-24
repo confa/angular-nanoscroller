@@ -1,3 +1,4 @@
+// edited by Radim: it was depending on the DOM being built by the end of the $digest, which not always is the case. So I updated it that it will render 100 msec after $digest, which is even better for performance and is reliable. Also, I removed render from angular's context so we can seve a few $applies
 ;
 (function (angular, $, undefined) {
   'use strict';
@@ -55,6 +56,7 @@
         template  : format(scrollableConfig.template, nanoScrollerDefaults),
         link      : function (scope, element, attr) {
           var oldHeight,
+              nanoCreated = false,
             contentClass = nanoScrollerDefaults.contentClass,
             nanoClass = nanoScrollerDefaults.nanoClass,
             contentElement = element.find('.' + contentClass)[0],
@@ -62,30 +64,45 @@
             $nanoElement = element.hasClass(nanoClass) ? element : element.find('.' + nanoClass),
             options = angular.extend({}, nanoScrollerDefaults, convertStringToValue(attr), scope.$eval(attr['scrollable']));
 
-          function listener(newHeight, oldHeight) {
-            // If this is first run, create nanoScroller
-            if (newHeight === oldHeight) {
-              // First run must be async
-              scope.$evalAsync(function () {
-                $nanoElement.nanoScroller(options);
-                $nanoElement.nanoScroller();
-              });
-            }
-            //If scroller was on the bottom, scroll to bottom
-            else if (newHeight !== oldHeight && contentElement.scrollTop &&
-              (oldHeight - contentElement.scrollTop - parentElement.clientHeight) < scrollableConfig.bottomMargin) {
-              scope.$evalAsync(function () {
-                // To make right calculation scroller must be reseted
-                // See https://github.com/maxaon/angular-nanoscroller/issues/4
-                $nanoElement.nanoScroller();
-                $nanoElement.nanoScroller({scroll: 'bottom'});
-              });
+          var waitingForUpdate = false;
 
+          function updateNano() {
+            waitingForUpdate = false;
+
+            if(!contentElement) { // when the nano scroll gets removed in $digest and we still have the timeout listener set
+              return;
             }
-            // Otherwise just update the pane
-            else {
+
+            var newHeight = contentElement.scrollHeight;
+
+            // If this is first run, create nanoScroller
+            if (!nanoCreated) {
+              nanoCreated = true;
+              $nanoElement.nanoScroller(options);
               $nanoElement.nanoScroller();
             }
+            //If scroller was on the bottom, scroll to bottom
+            /*else if (newHeight !== oldHeight && contentElement.scrollTop &&
+                (oldHeight - contentElement.scrollTop - parentElement.clientHeight) < scrollableConfig.bottomMargin) {
+                $nanoElement.nanoScroller();
+                $nanoElement.nanoScroller({scroll: 'bottom'});
+            }*/
+            // Otherwise just update the pane
+            else /*if(newHeight !== oldHeight)*/ {  // uncomment if it slows down digest significantly (it shouldn't). The problem with that condition is when we programatically change scroll offset, but the height remains the same, the nano wouldn't update
+              $nanoElement.nanoScroller();
+            }
+
+            oldHeight = newHeight;
+
+          }
+
+          function listener() {
+            if(waitingForUpdate) {
+              return;
+            }
+            waitingForUpdate = true;
+            setTimeout(updateNano, 0);
+            setTimeout(updateNano, 200);
           }
 
           function collectionListener() {
@@ -112,13 +129,12 @@
           else {
             // http://jsperf.com/angular-watch-collection-vs-element-scroll-height
             // Call nanoScroller, when height of content is changed
-            scope.$watch(function () {
-                return contentElement.scrollHeight;
-              },
-              listener);
+            scope.$watch(listener);
           }
           scope.$on("$destroy", function () {
-            $nanoElement.nanoScroller({ destroy: true });
+            if($nanoElement) {
+              $nanoElement.nanoScroller({destroy: true});
+            }
             $nanoElement = contentElement = parentElement = null;
           });
         }
